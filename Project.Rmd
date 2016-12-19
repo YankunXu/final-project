@@ -1,0 +1,303 @@
+---
+title: "Project"
+author: "Yankun Xu"
+date: "December 10th, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(shiny)
+library(ggplot2)
+```
+
+I'm always a huge fan of NBA, so I want to use the knowledge I learn in class to do something related to the sport that I love. Since most NBA players are from the states. I'm wondering which state has the best basketball talent in America. At the same time, I want to find out if there is some relationship between basketball talent and economy and black population and overall population, which factor has the biggest influence on basketball talent.
+
+(1)Get the data
+
+I get the data for NBA players on "http://www.basketball-reference.com/" and choose the data that I want.
+
+```{r}
+player<-read.csv("nba roster.csv") 
+```
+
+In order to get the gdp for per state, I search on the wikipedia and extract the data I want using rvest package.
+
+```{r}
+url<-"https://en.wikipedia.org/wiki/List_of_U.S._states_by_GDP"
+
+data1 <-
+  url %>%
+  read_html() %>%
+  html_nodes("table") %>%
+  html_table(fill = TRUE)
+gdp<-data1[[1]]
+```
+
+Population also can be a factor so I extract the data from wikipedia again.
+
+```{r}
+url<-"https://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_population"
+
+data2 <-
+  url %>%
+  read_html() %>%
+  html_nodes("table") %>%
+  html_table(fill = TRUE)
+pop<-data2[[1]]
+```
+
+Finally I got the data of black population by state from wikipedia.
+
+```{r}
+url<-"https://en.wikipedia.org/wiki/List_of_U.S._states_by_African-American_population"
+
+data3 <-
+  url %>%
+  read_html() %>%
+  html_nodes("table") %>%
+  html_table(fill = TRUE)
+blackpop<-data3[[3]]
+```
+
+(2)Tidy the data
+
+After we get the data, we need to clean the data. Using replace and extract to get the useful data, also change the column names to make our data set more readable.
+
+```{r}
+player_tidy<-player
+
+player_tidy$Date<-
+  player_tidy$Date%>%
+  str_replace_all("[A-Za-z]", "")%>%
+  str_extract("[0-9]{4}")# extract the birthyear
+
+colnames(player_tidy)[4]<-"Birthyear"
+  
+player_tidy$Player <- str_extract(player_tidy[,"Player"],"[A-Za-z0-9]+[[:blank:]]*[A-Za-z0-9]+")#extract the player name
+
+player_tidy<-player_tidy%>%
+  filter(Birthyear>=1980)#filter the players who were born after 1980
+
+player_tidy<-player_tidy%>%
+  filter(G>=10)#filter players who played at least 10 games
+
+```
+
+```{r}
+gdp_tidy<-gdp
+
+gdp_tidy$State<-
+ str_extract_all(gdp_tidy[, "State"], "([> A-z ]+)")
+gdp_tidy$`2014 (USD millions)`<-NULL 
+#extract the exact state name and delete the gdp in 2014
+
+pop_tidy<-pop
+pop_tidy<-pop_tidy[c(1:29, 31:49, 51, 52),c(1,3,4,9)]
+colnames(pop_tidy)[]<-c("Rank", "State", "Population", "Percent")
+
+pop_tidy$State<-
+ str_extract_all(pop_tidy[, "State"], "([> A-z ]+)")
+pop_tidy$Rank<-NULL
+#extract the extract state name and select the data we want
+
+blackpop_tidy<-blackpop
+blackpop_tidy$Rank<-NULL
+```
+
+(3)Draw the choropleths of nba players, black population, population and GDP in each state
+
+Using choroplethr package to draw the choropleth map.
+ 
+NBA players
+```{r}
+NBA_amount<-player_tidy%>%
+  group_by(State)%>%
+ mutate(n=n())%>%
+  select(State,n)%>%
+  slice(1)
+
+NBA_amount_cho<-NBA_amount
+colnames(NBA_amount_cho)[1] <- "region"
+colnames(NBA_amount_cho)[2] <- "value"
+NBA_amount_cho$region <- tolower(NBA_amount_cho$region)
+
+library(choroplethr)
+library(choroplethrMaps)
+state_choropleth(NBA_amount_cho,
+                 title  = "NBA players per state", 
+                 legend = "Number of NBA players", num_colors = 1)
+```
+
+Black population
+```{r}
+blackpop_cho<-blackpop_tidy[,1:2]
+
+colnames(blackpop_cho)[]<-c("region", "value")
+
+blackpop_cho$region<-tolower(blackpop_cho$region)
+
+blackpop_cho$value<-str_replace_all(blackpop_cho$value, ",", "")%>%
+  as.integer()
+
+state_choropleth(blackpop_cho,
+                 title  = "black population per state", 
+                 legend = "black population", num_colors = 1)
+
+```
+
+population
+```{r}
+pop_cho<-pop_tidy[,1:2]
+
+colnames(pop_cho)[]<-c("region", "value")
+
+pop_cho$region<-tolower(pop_cho$region)
+
+pop_cho$value<-str_replace_all(pop_cho$value, ",", "")%>%
+  as.integer()
+
+state_choropleth(pop_cho,
+                 title  = "population per state", 
+                 legend = "population", num_colors = 1)
+```
+
+GDP
+```{r}
+gdp_cho<-gdp_tidy[,2:3]
+
+colnames(gdp_cho)[]<-c("region", "value")
+
+gdp_cho$region<-tolower(gdp_cho$region)
+
+gdp_cho$value<-str_replace_all(gdp_cho$value, ",", "")%>%
+  as.integer()
+
+state_choropleth(gdp_cho,
+                 title  = "gdp per state", 
+                 legend = "GDP", num_colors = 1)
+```
+
+(4)ggplot
+
+Then I want to draw a graph between year and number of players born in that year for top 5 states with most nba players .
+
+```{r}
+
+player_count<-
+player_tidy%>%
+  group_by(Birthyear, State)%>%
+  mutate(count=n())
+
+player_plot<- left_join(player_count, NBA_amount)%>%
+filter(n>=32)
+
+player_plot%>%
+  ggplot(aes(Birthyear, count, colour = State,group=State))+ xlab("year")+ylab("number of NBA players")+geom_point()+geom_line()+ggtitle("Top 5 states with most NBA players") + theme(panel.background = element_rect(fill = "gray95"), 
+    plot.background = element_rect(fill = "darkgoldenrod2"), 
+    legend.background = element_rect(fill = "gray99"))
+
+```
+
+Conclusion:
+1.Top 5 ¡°Basketball¡± states are : California, Texas, New York, Illinois, Georgia
+2.1990 is the peak birth year of NBA players for most states, maybe because Michael Jordan won back to back championship had a really big influence on that generation.
+
+(5)then I want to make a shiny app about NBA players name and their birthyear of each state.
+
+
+```{r}
+
+ui <- fluidPage(
+  sidebarLayout(
+    
+    sidebarPanel(sliderInput("yearInput", "Year", min = 1970, max = 2000,
+                             value = c(1980, 1997)),
+                 textInput("nameInput", "State")),
+    
+    
+    mainPanel(plotOutput("main_plot"),
+              tableOutput("results"))
+  ),
+  
+  titlePanel("number of NBA players (horiz axis) versus year")
+)
+
+
+
+server <- function(input, output, session) {
+  reduced_df <- reactive({
+    
+    filter(
+      player_count, 
+      State == input$nameInput, 
+      Birthyear >= input$yearInput[1] & Birthyear <= input$yearInput[2]
+      
+    )
+  })
+  
+  output$main_plot <- renderPlot({
+    ggplot(data = reduced_df(), aes(Birthyear, count, colour = State, group=State)) + geom_point()+ geom_line() + ggtitle("number of NBA players (horiz axis) versus year")
+  })
+  
+  output$results <- renderTable({ 
+    reduced_df()
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+(6)merge the data 
+
+In order to find the relationship between NBA players and gdp(population/black population). I want to merge the data first.
+
+```{r}
+gdp_tidy$State<-as.character(gdp_tidy$State)
+pop_tidy$State<-as.character(pop_tidy$State)
+blackpop_tidy$State<-as.character(blackpop_tidy$State)
+
+nba_gdp_pop_blcpop<-left_join(gdp_tidy, NBA_amount)
+
+nba_gdp_pop_blcpop$count[is.na(nba_gdp_pop_blcpop$count)] <- 0
+
+nba_gdp_pop_blcpop<-left_join(nba_gdp_pop_blcpop, pop_tidy)
+
+nba_gdp_pop_blcpop<-left_join(nba_gdp_pop_blcpop, blackpop_tidy)
+
+nba_gdp_pop_blcpop$Rank<-NULL
+
+colnames(nba_gdp_pop_blcpop)[]<-c("State", "GDP", "NBA.players", "Population", "Percent", "Black.Population", "Black.Percent")
+```
+
+(7)relationship between NBA players and GDP, population and black population 
+
+```{r}
+nba_gdp_pop_blcpop$GDP<-str_replace_all(nba_gdp_pop_blcpop$GDP, ",", "")%>%
+  as.integer()
+
+nba_gdp_pop_blcpop$Population<-str_replace_all(nba_gdp_pop_blcpop$Population, ",", "")%>%
+  as.integer()
+
+nba_gdp_pop_blcpop$Black.Population<-str_replace_all(nba_gdp_pop_blcpop$Black.Population, ",", "")%>%
+  as.integer()
+
+ggplot(data=nba_gdp_pop_blcpop, aes(GDP, NBA.players))+geom_point()+geom_line()+ggtitle("GDP VS NBA Players")
+
+ggplot(data=nba_gdp_pop_blcpop, aes(Population, NBA.players))+geom_point()+geom_line()+ggtitle("Population VS NBA Players")
+
+ggplot(data=nba_gdp_pop_blcpop, aes(Black.Population, NBA.players))+geom_point()+geom_line()+ggtitle("Black Population VS NBA Players")
+
+lmod<- lm(data= nba_gdp_pop_blcpop, NBA.players~ GDP + Population + Black.Population)
+summary(lmod)
+```
+
+Conclusion:
+
+1.Top 5 states with basketball talent are : California, Texas, New York, Illinois, Georgia
+
+2.Nowadays GDP and percentage of African-American population have the most influence on the number of NBA players by state
